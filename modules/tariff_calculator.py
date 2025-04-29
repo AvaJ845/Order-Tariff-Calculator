@@ -1,183 +1,186 @@
-class TariffCalculator:
-    def __init__(self, tariff_data):
-        # Load tariff data from the provided dictionary
-        self.base_duty_rates = tariff_data["base_duty_rates"]
-        self.universal_tariff = tariff_data["universal_tariff"]
-        self.reciprocal_tariffs = tariff_data["reciprocal_tariffs"]
-        self.section_301_tariffs = tariff_data["section_301_tariffs"]
-        self.de_minimis_threshold = tariff_data["de_minimis_threshold"]
-        self.de_minimis_excluded_countries = tariff_data["de_minimis_excluded_countries"]
+"""
+Tariff calculation module for the Amazon Order Tariff Calculator application.
+Contains functions to calculate tariffs for items based on current rates.
+"""
+
+import datetime
+
+def calculate_tariffs(items, tariff_data):
+    """
+    Calculate tariffs for a list of items based on the provided tariff data.
+    
+    Args:
+        items (list): List of item dictionaries with name, price, country, and category
+        tariff_data (dict): Dictionary containing tariff rates and configuration
         
-        # Load user adjustments if available
-        self.user_adjustments = tariff_data.get("user_adjustments", {
-            "enabled": False,
-            "universal_multiplier": 1.0, 
-            "country_multipliers": {},
-            "category_multipliers": {}
-        })
-        
-    def _get_adjusted_rate(self, rate_type, key, base_rate):
-        """
-        Apply user adjustments to a tariff rate if enabled.
-        
-        Args:
-            rate_type: Type of rate ('universal', 'country', or 'category')
-            key: Key for the specific rate (country or category name)
-            base_rate: The original unadjusted rate
-            
-        Returns:
-            Adjusted rate value
-        """
-        if not self.user_adjustments.get("enabled", False):
-            return base_rate
-            
-        # Apply universal multiplier to all rates
-        adjusted_rate = base_rate * self.user_adjustments.get("universal_multiplier", 1.0)
-        
-        # Apply specific multipliers if available
-        if rate_type == "country" and key in self.user_adjustments.get("country_multipliers", {}):
-            adjusted_rate *= self.user_adjustments["country_multipliers"][key]
-            
-        if rate_type == "category" and key in self.user_adjustments.get("category_multipliers", {}):
-            adjusted_rate *= self.user_adjustments["category_multipliers"][key]
-            
-        return adjusted_rate
-        
-    def calculate_tariffs(self, items):
-        """
-        Calculate tariffs for a list of items.
-        
-        Args:
-            items: List of dictionaries with keys:
-                  - 'name': item name
-                  - 'price': item price in USD
-                  - 'country': country of origin
-                  - 'category': product category
-                  
-        Returns:
-            Dictionary with tariff details and total costs
-        """
-        total_price = sum(item['price'] for item in items)
-        results = {
-            'items': [],
-            'total_item_price': total_price,
-            'total_tariffs': 0,
-            'total_order_cost': 0,
-            'breakdown': {},
-            'user_adjustments_applied': self.user_adjustments.get("enabled", False)
-        }
-        
-        # Check if under de minimis threshold
-        is_under_de_minimis = total_price < self.de_minimis_threshold
-        
-        # Check if any items are from countries excluded from de minimis
-        has_excluded_country = any(
-            item['country'].lower() in self.de_minimis_excluded_countries 
-            for item in items
-        )
-        
-        # Apply de minimis exemption if eligible
-        apply_de_minimis = is_under_de_minimis and not has_excluded_country
-        
-        # Dictionary to track tariff types for reporting
-        tariff_types = {
-            'base_duty': 0,
-            'universal_tariff': 0,
-            'reciprocal_tariff': 0,
-            'section_301': 0
-        }
-        
-        # Process each item
+    Returns:
+        dict: Results of the calculation including breakdown and totals
+    """
+    # Initialize result structure
+    result = {
+        "items": [],
+        "total_item_price": 0,
+        "total_tariffs": 0,
+        "total_order_cost": 0,
+        "tariff_percentage": 0,
+        "breakdown": {
+            "base_duty": 0,
+            "universal_tariff": 0,
+            "reciprocal_tariff": 0,
+            "section_301": 0
+        },
+        "user_adjustments_applied": tariff_data["user_adjustments"]["enabled"]
+    }
+    
+    # Get universal tariff rate
+    universal_tariff_rate = tariff_data["universal_tariff"]
+    
+    # Get de minimis threshold
+    de_minimis_threshold = tariff_data["de_minimis_threshold"]
+    de_minimis_excluded_countries = tariff_data["de_minimis_excluded_countries"]
+    
+    # Calculate total order value
+    total_order_value = sum(item["price"] for item in items)
+    
+    # Check if order qualifies for de minimis exemption
+    de_minimis_exempt = True
+    if total_order_value > de_minimis_threshold:
+        de_minimis_exempt = False
+    else:
+        # Check if any item comes from excluded country
         for item in items:
-            item_result = {
-                'name': item['name'],
-                'price': item['price'],
-                'country': item['country'],
-                'category': item['category'],
-                'tariffs': 0,
-                'final_price': item['price']
-            }
-            
-            # Skip tariff calculation if eligible for de minimis exemption
-            if apply_de_minimis:
-                item_result['tariff_details'] = "Exempt (under de minimis threshold)"
-                results['items'].append(item_result)
-                continue
-            
-            # Get category and country, with defaults if not in our lists
-            category = item['category'].lower()
-            if category not in self.base_duty_rates:
-                category = 'other'
-                
-            country = item['country'].lower()
-            if country not in self.reciprocal_tariffs:
-                country = 'other'
-                
-            # Calculate base duty rate with adjustments if enabled
-            base_rate = self.base_duty_rates[category]
-            adjusted_base_rate = self._get_adjusted_rate("category", category, base_rate)
-            base_duty = item['price'] * adjusted_base_rate
-            tariff_types['base_duty'] += base_duty
-            
-            # Calculate universal tariff with adjustments if enabled
-            adjusted_universal_rate = self._get_adjusted_rate("universal", "universal", self.universal_tariff)
-            universal_tariff = item['price'] * adjusted_universal_rate
-            tariff_types['universal_tariff'] += universal_tariff
-            
-            # Calculate country-specific reciprocal tariff with adjustments if enabled
-            country_rate = self.reciprocal_tariffs[country]
-            adjusted_country_rate = self._get_adjusted_rate("country", country, country_rate)
-            reciprocal_tariff = item['price'] * adjusted_country_rate
-            tariff_types['reciprocal_tariff'] += reciprocal_tariff
-            
-            # Add Section 301 tariffs for China with adjustments if enabled
-            section_301 = 0
-            if country == 'china':
-                section_301_rate = self.section_301_tariffs[category]
-                adjusted_section_301_rate = self._get_adjusted_rate("category", f"301_{category}", section_301_rate)
-                section_301 = item['price'] * adjusted_section_301_rate
-                tariff_types['section_301'] += section_301
-                
-            # Total tariffs for this item
-            item_tariffs = base_duty + universal_tariff + reciprocal_tariff + section_301
-            
-            # Update item result
-            item_result['tariffs'] = item_tariffs
-            item_result['final_price'] = item['price'] + item_tariffs
-            
-            # Add tariff breakdown for this item
-            item_result['tariff_details'] = {
-                'base_duty': base_duty,
-                'universal_tariff': universal_tariff,
-                'reciprocal_tariff': reciprocal_tariff,
-                'base_rate': base_rate,
-                'adjusted_base_rate': adjusted_base_rate,
-                'universal_rate': self.universal_tariff,
-                'adjusted_universal_rate': adjusted_universal_rate,
-                'country_rate': country_rate,
-                'adjusted_country_rate': adjusted_country_rate
-            }
-            
-            if country == 'china':
-                item_result['tariff_details']['section_301'] = section_301
-                item_result['tariff_details']['section_301_rate'] = self.section_301_tariffs[category]
-                item_result['tariff_details']['adjusted_section_301_rate'] = adjusted_section_301_rate
-                
-            # Add to results
-            results['items'].append(item_result)
-            results['total_tariffs'] += item_tariffs
+            if item["country"] in de_minimis_excluded_countries:
+                de_minimis_exempt = False
+                break
+    
+    # Process each item
+    for item in items:
+        item_result = {
+            "name": item["name"],
+            "price": item["price"],
+            "country": item["country"],
+            "category": item["category"],
+            "tariffs": 0,
+            "final_price": item["price"],
+            "tariff_details": {}
+        }
         
-        # Calculate final costs
-        results['total_order_cost'] = results['total_item_price'] + results['total_tariffs']
-        results['breakdown'] = tariff_types
-        results['tariff_percentage'] = (results['total_tariffs'] / results['total_item_price']) * 100 if results['total_item_price'] > 0 else 0
+        # Check if exempt from tariffs
+        if de_minimis_exempt:
+            item_result["tariff_details"] = "Exempt (below de minimis threshold)"
+            result["items"].append(item_result)
+            continue
         
-        # Add adjustment info to results
-        if self.user_adjustments.get("enabled", False):
-            results['applied_adjustments'] = {
-                'universal_multiplier': self.user_adjustments.get("universal_multiplier", 1.0),
-                'country_multipliers': self.user_adjustments.get("country_multipliers", {}),
-                'category_multipliers': self.user_adjustments.get("category_multipliers", {})
-            }
+        # Initialize tariff breakdown for this item
+        tariff_details = {
+            "base_duty": 0,
+            "universal_tariff": 0,
+            "reciprocal_tariff": 0,
+            "section_301": 0,
+            # Store original rates for reference
+            "base_rate": 0,
+            "universal_rate": universal_tariff_rate,
+            "country_rate": 0,
+            "section_301_rate": 0,
+            # Adjusted rates (if user adjustments are enabled)
+            "adjusted_base_rate": 0,
+            "adjusted_universal_rate": universal_tariff_rate,
+            "adjusted_country_rate": 0,
+            "adjusted_section_301_rate": 0
+        }
         
-        return results
+        # Get base rates
+        base_duty_rate = tariff_data["base_duty_rates"].get(item["category"], 0)
+        reciprocal_tariff_rate = tariff_data["reciprocal_tariffs"].get(item["country"], 0)
+        
+        # Special case for China (Section 301 tariffs)
+        section_301_rate = 0
+        if item["country"] == "china" and item["category"] in tariff_data["section_301_tariffs"]:
+            section_301_rate = tariff_data["section_301_tariffs"][item["category"]]
+        
+        # Store original rates
+        tariff_details["base_rate"] = base_duty_rate
+        tariff_details["country_rate"] = reciprocal_tariff_rate
+        tariff_details["section_301_rate"] = section_301_rate
+        
+        # Apply user adjustments if enabled
+        if tariff_data["user_adjustments"]["enabled"]:
+            # Get multipliers
+            universal_multiplier = tariff_data["user_adjustments"]["universal_multiplier"]
+            
+            # Category-specific multiplier
+            category_multiplier = tariff_data["user_adjustments"]["category_multipliers"].get(
+                item["category"], 1.0
+            )
+            
+            # Country-specific multiplier
+            country_multiplier = tariff_data["user_adjustments"]["country_multipliers"].get(
+                item["country"], 1.0
+            )
+            
+            # Apply multipliers
+            adjusted_base_rate = base_duty_rate * universal_multiplier * category_multiplier
+            adjusted_universal_rate = universal_tariff_rate * universal_multiplier
+            adjusted_reciprocal_rate = reciprocal_tariff_rate * universal_multiplier * country_multiplier
+            adjusted_section_301_rate = section_301_rate * universal_multiplier * category_multiplier
+            
+            # Store adjusted rates
+            tariff_details["adjusted_base_rate"] = adjusted_base_rate
+            tariff_details["adjusted_universal_rate"] = adjusted_universal_rate
+            tariff_details["adjusted_country_rate"] = adjusted_reciprocal_rate
+            tariff_details["adjusted_section_301_rate"] = adjusted_section_301_rate
+            
+            # Calculate tariff amounts using adjusted rates
+            base_duty = item["price"] * adjusted_base_rate
+            universal_tariff = item["price"] * adjusted_universal_rate
+            reciprocal_tariff = item["price"] * adjusted_reciprocal_rate
+            section_301 = item["price"] * adjusted_section_301_rate
+        else:
+            # Calculate tariff amounts using original rates
+            base_duty = item["price"] * base_duty_rate
+            universal_tariff = item["price"] * universal_tariff_rate
+            reciprocal_tariff = item["price"] * reciprocal_tariff_rate
+            section_301 = item["price"] * section_301_rate
+        
+        # Round to two decimal places
+        base_duty = round(base_duty, 2)
+        universal_tariff = round(universal_tariff, 2)
+        reciprocal_tariff = round(reciprocal_tariff, 2)
+        section_301 = round(section_301, 2)
+        
+        # Store tariff amounts
+        tariff_details["base_duty"] = base_duty
+        tariff_details["universal_tariff"] = universal_tariff
+        tariff_details["reciprocal_tariff"] = reciprocal_tariff
+        tariff_details["section_301"] = section_301
+        
+        # Calculate total tariff for this item
+        total_tariff = base_duty + universal_tariff + reciprocal_tariff + section_301
+        
+        # Update item result
+        item_result["tariffs"] = total_tariff
+        item_result["final_price"] = item["price"] + total_tariff
+        item_result["tariff_details"] = tariff_details
+        
+        # Add to results
+        result["items"].append(item_result)
+        
+        # Update totals
+        result["total_item_price"] += item["price"]
+        result["total_tariffs"] += total_tariff
+        result["breakdown"]["base_duty"] += base_duty
+        result["breakdown"]["universal_tariff"] += universal_tariff
+        result["breakdown"]["reciprocal_tariff"] += reciprocal_tariff
+        result["breakdown"]["section_301"] += section_301
+    
+    # Calculate final totals
+    result["total_order_cost"] = result["total_item_price"] + result["total_tariffs"]
+    
+    # Calculate tariff percentage
+    if result["total_order_cost"] > 0:
+        result["tariff_percentage"] = (result["total_tariffs"] / result["total_order_cost"]) * 100
+    
+    # Add timestamp
+    result["timestamp"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    return result
