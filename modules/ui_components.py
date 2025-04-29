@@ -370,3 +370,208 @@ def render_calculation_results(results):
                 st.markdown(f"**Country:** {item['country'].title()}")
                 st.markdown(f"**Category:** {item['category'].title()}")
                 st.markdown(f"**Base Price:** ${item['price']:.2f}")
+
+
+if isinstance(item['tariff_details'], str):
+                    st.markdown(f"**Tariff Status:** {item['tariff_details']}")
+                else:
+                    # Create a small bar chart for this item's tariffs
+                    tariff_types = []
+                    amounts = []
+                    
+                    if item['tariff_details']['base_duty'] > 0:
+                        tariff_types.append('Base Duty')
+                        amounts.append(item['tariff_details']['base_duty'])
+                    
+                    if item['tariff_details']['universal_tariff'] > 0:
+                        tariff_types.append('Universal')
+                        amounts.append(item['tariff_details']['universal_tariff'])
+                    
+                    if item['tariff_details']['reciprocal_tariff'] > 0:
+                        tariff_types.append('Reciprocal')
+                        amounts.append(item['tariff_details']['reciprocal_tariff'])
+                    
+                    if 'section_301' in item['tariff_details'] and item['tariff_details']['section_301'] > 0:
+                        tariff_types.append('Section 301')
+                        amounts.append(item['tariff_details']['section_301'])
+                    
+                    # Calculate tariff percentage
+                    tariff_percentage = (item['tariffs'] / item['price']) * 100 if item['price'] > 0 else 0
+                    
+            with col2:
+                if isinstance(item['tariff_details'], str):
+                    st.markdown(f"**Final Price:** ${item['final_price']:.2f}")
+                else:
+                    st.markdown(f"**Total Tariffs:** ${item['tariffs']:.2f} ({tariff_percentage:.1f}%)")
+                    st.markdown(f"**Final Price:** ${item['final_price']:.2f}")
+                    
+                    # Create horizontal bar chart
+                    if tariff_types:
+                        fig = go.Figure()
+                        fig.add_trace(go.Bar(
+                            x=amounts,
+                            y=tariff_types,
+                            orientation='h',
+                            marker_color='indianred'
+                        ))
+                        fig.update_layout(
+                            title="Tariff Breakdown",
+                            xaxis_title="Amount ($)",
+                            height=200,
+                            margin=dict(l=0, r=0, t=30, b=0)
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                    # Show rate adjustments if applicable
+                    if results.get('user_adjustments_applied', False) and not isinstance(item['tariff_details'], str):
+                        st.subheader("Applied Rate Adjustments")
+                        
+                        if 'base_rate' in item['tariff_details'] and 'adjusted_base_rate' in item['tariff_details']:
+                            base_rate = item['tariff_details']['base_rate']
+                            adjusted = item['tariff_details']['adjusted_base_rate']
+                            st.markdown(f"**Base Duty:** {base_rate*100:.1f}% → {adjusted*100:.1f}%")
+                        
+                        if 'universal_rate' in item['tariff_details'] and 'adjusted_universal_rate' in item['tariff_details']:
+                            univ_rate = item['tariff_details']['universal_rate']
+                            adjusted = item['tariff_details']['adjusted_universal_rate']
+                            st.markdown(f"**Universal:** {univ_rate*100:.1f}% → {adjusted*100:.1f}%")
+                        
+                        if 'country_rate' in item['tariff_details'] and 'adjusted_country_rate' in item['tariff_details']:
+                            country_rate = item['tariff_details']['country_rate']
+                            adjusted = item['tariff_details']['adjusted_country_rate']
+                            st.markdown(f"**Reciprocal:** {country_rate*100:.1f}% → {adjusted*100:.1f}%")
+                        
+                        if 'section_301_rate' in item['tariff_details'] and 'adjusted_section_301_rate' in item['tariff_details']:
+                            s301_rate = item['tariff_details']['section_301_rate']
+                            adjusted = item['tariff_details']['adjusted_section_301_rate']
+                            st.markdown(f"**Section 301:** {s301_rate*100:.1f}% → {adjusted*100:.1f}%")
+    
+    # Final note
+    st.markdown("---")
+    st.markdown(
+        """
+        **Note:** This calculation is an estimate based on current tariff rates.
+        Actual tariffs may vary based on specific HTS codes and other factors determined by customs authorities.
+        """
+    )
+
+def render_history_tab(calculation_history):
+    """Render the calculation history tab"""
+    st.header("Calculation History")
+    
+    if not calculation_history:
+        st.info("No calculation history found.")
+        return
+    
+    # Create a summary dataframe
+    summary_data = []
+    for calc in calculation_history:
+        summary_data.append({
+            'Date': calc.get('timestamp', 'Unknown'),
+            'Items': len(calc.get('items', [])),
+            'Total Cost': calc.get('total_item_price', 0),
+            'Total Tariffs': calc.get('total_tariffs', 0),
+            'Tariff Percentage': calc.get('tariff_percentage', 0),
+            'Custom Rates': "Yes" if calc.get('user_adjustments_applied', False) else "No"
+        })
+    
+    summary_df = pd.DataFrame(summary_data)
+    st.dataframe(summary_df)
+    
+    # Allow viewing detailed results
+    if len(calculation_history) > 0:
+        selected_index = st.selectbox(
+            "Select calculation to view details:",
+            range(len(calculation_history)),
+            format_func=lambda i: f"{calculation_history[i].get('timestamp', 'Unknown')} - {len(calculation_history[i].get('items', []))} items"
+        )
+        
+        st.subheader("Detailed Results")
+        render_calculation_results(calculation_history[selected_index])
+
+def render_tariff_rates_tab(tariff_data):
+    """Render the tariff rates information tab"""
+    st.header("Current Tariff Rates")
+    st.markdown(f"**Last Updated:** {tariff_data.get('updated_date', 'Unknown')}")
+    
+    # Create tabs for different tariff types
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "Base Duty Rates", 
+        "Reciprocal Tariffs", 
+        "Section 301 Tariffs",
+        "De Minimis Info"
+    ])
+    
+    with tab1:
+        st.subheader("Base Duty Rates by Product Category")
+        base_rates_df = pd.DataFrame({
+            'Category': tariff_data['base_duty_rates'].keys(),
+            'Rate (%)': [rate * 100 for rate in tariff_data['base_duty_rates'].values()]
+        })
+        base_rates_df['Category'] = base_rates_df['Category'].str.title()
+        st.dataframe(base_rates_df)
+        
+        fig = px.bar(
+            base_rates_df, 
+            x='Category', 
+            y='Rate (%)',
+            title='Base Duty Rates by Category',
+            color='Rate (%)'
+        )
+        st.plotly_chart(fig)
+    
+    with tab2:
+        st.subheader("Country-Specific Reciprocal Tariffs")
+        reciprocal_df = pd.DataFrame({
+            'Country': tariff_data['reciprocal_tariffs'].keys(),
+            'Rate (%)': [rate * 100 for rate in tariff_data['reciprocal_tariffs'].values()]
+        })
+        reciprocal_df['Country'] = reciprocal_df['Country'].str.title()
+        
+        # Sort by rate descending
+        reciprocal_df = reciprocal_df.sort_values('Rate (%)', ascending=False)
+        
+        st.dataframe(reciprocal_df)
+        
+        fig = px.bar(
+            reciprocal_df, 
+            x='Country', 
+            y='Rate (%)',
+            title='Reciprocal Tariff Rates by Country',
+            color='Rate (%)'
+        )
+        st.plotly_chart(fig)
+    
+    with tab3:
+        st.subheader("Section 301 Tariffs (China)")
+        section_301_df = pd.DataFrame({
+            'Category': tariff_data['section_301_tariffs'].keys(),
+            'Rate (%)': [rate * 100 for rate in tariff_data['section_301_tariffs'].values()]
+        })
+        section_301_df['Category'] = section_301_df['Category'].str.title()
+        st.dataframe(section_301_df)
+        
+        fig = px.bar(
+            section_301_df, 
+            x='Category', 
+            y='Rate (%)',
+            title='Section 301 Tariff Rates by Category',
+            color='Rate (%)'
+        )
+        st.plotly_chart(fig)
+    
+    with tab4:
+        st.subheader("De Minimis Threshold Information")
+        st.markdown(
+            f"""
+            The **de minimis threshold** is currently set at **${tariff_data['de_minimis_threshold']}**.
+            
+            Shipments valued below this amount may be exempt from duties and tariffs, 
+            unless they originate from excluded countries.
+            
+            **Excluded Countries:**
+            """
+        )
+        
+        for country in tariff_data['de_minimis_excluded_countries']:
+            st.markdown(f"- {country.title()}")
