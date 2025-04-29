@@ -370,9 +370,7 @@ def render_calculation_results(results):
                 st.markdown(f"**Country:** {item['country'].title()}")
                 st.markdown(f"**Category:** {item['category'].title()}")
                 st.markdown(f"**Base Price:** ${item['price']:.2f}")
-
-
-if isinstance(item['tariff_details'], str):
+                if isinstance(item['tariff_details'], str):
                     st.markdown(f"**Tariff Status:** {item['tariff_details']}")
                 else:
                     # Create a small bar chart for this item's tariffs
